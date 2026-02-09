@@ -1,0 +1,10 @@
+__pycache__
+build/
+build-wsl/
+*.uf2
+*.elf
+*.bin
+*.hex
+*.map
+*.dis
+.vscode/
