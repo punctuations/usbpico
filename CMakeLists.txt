@@ -17,6 +17,7 @@ add_executable(usb_character
     main.c
     usb_descriptors.c
     msc_disk.c
+    sd_card.c
 )
 
 target_include_directories(usb_character PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -26,6 +27,7 @@ target_link_libraries(usb_character
     tinyusb_device
     tinyusb_board
     hardware_i2c
+    hardware_spi
 )
 
 pico_add_extra_outputs(usb_character)

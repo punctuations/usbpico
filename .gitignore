@@ -8,3 +8,15 @@ build-wsl/
 *.map
 *.dis
 .vscode/
+
+# CMake build artifacts (generated in root when cmake runs outside build/)
+CMakeCache.txt
+CMakeDoxyfile.in
+CMakeDoxygenDefaults.cmake
+CMakeFiles/
+_deps/
+build.ninja
+cmake_install.cmake
+generated/
+pico_flash_region.ld
+picotool/

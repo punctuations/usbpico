@@ -4,11 +4,12 @@
 #include "pico/stdlib.h"
 #include "tusb.h"
 #include "hardware/i2c.h"
+#include "hardware/spi.h"
+#include "sd_card.h"
 #include "sprite.h"
 #include "sprites/djungelskog/djungelskog.h"
 
 // External functions
-extern void disk_init(void);
 extern float disk_get_usage(void);
 
 static const sprite_t *current_sprite = &sprite_djungelskog;
@@ -111,8 +112,26 @@ void draw_character(float percent) {
 
 int main(void) {
     stdio_init_all();
+
+    // SPI for SD card (400kHz during init, sd_init() speeds up after)
+    spi_init(SD_SPI_PORT, 400 * 1000);
+    gpio_set_function(SD_PIN_SCK, GPIO_FUNC_SPI);
+    gpio_set_function(SD_PIN_MOSI, GPIO_FUNC_SPI);
+    gpio_set_function(SD_PIN_MISO, GPIO_FUNC_SPI);
+    gpio_pull_up(SD_PIN_MISO); // Keep MISO defined when SD card releases DO
+
+    // CS pin: manual GPIO output, active low
+    gpio_init(SD_PIN_CS);
+    gpio_set_dir(SD_PIN_CS, GPIO_OUT);
+    gpio_put(SD_PIN_CS, 1);
+
+    // Card detect pin: input with pull-up (active low)
+    gpio_init(SD_PIN_CD);
+    gpio_set_dir(SD_PIN_CD, GPIO_IN);
+    gpio_pull_up(SD_PIN_CD);
+
+    bool sd_ok = sd_init();
     tusb_init();
-    disk_init();
 
     // I2C for display
     i2c_init(i2c0, 400000);

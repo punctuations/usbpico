@@ -1,90 +1,103 @@
 #include "tusb.h"
+#include "sd_card.h"
 #include <string.h>
 
-// 64KB RAM disk — RP2040 only has 264KB SRAM total
-#define DISK_BLOCK_NUM  128
-#define DISK_BLOCK_SIZE 512
-
-static uint8_t disk[DISK_BLOCK_NUM][DISK_BLOCK_SIZE];
 static bool ejected = false;
 
-// Pre-format with FAT12 on startup
-void disk_init(void) {
-    memset(disk, 0, sizeof(disk));
-
-    // Boot sector
-    uint8_t *boot = disk[0];
-    boot[0] = 0xEB; boot[1] = 0x3C; boot[2] = 0x90;
-    memcpy(&boot[3], "MSDOS5.0", 8);
-    boot[11] = 0x00; boot[12] = 0x02; // 512 bytes/sector
-    boot[13] = 1;                       // 1 sector/cluster
-    boot[14] = 1; boot[15] = 0;        // 1 reserved sector
-    boot[16] = 1;                       // 1 FAT
-    boot[17] = 16; boot[18] = 0;       // 16 root entries
-    boot[19] = (DISK_BLOCK_NUM & 0xFF);
-    boot[20] = (DISK_BLOCK_NUM >> 8);
-    boot[21] = 0xF8;                    // media type
-    boot[22] = 1; boot[23] = 0;        // sectors per FAT
-    boot[510] = 0x55; boot[511] = 0xAA;
-
-    // FAT
-    uint8_t *fat = disk[1];
-    fat[0] = 0xF8; fat[1] = 0xFF; fat[2] = 0xFF;
-
-    // Root directory — volume label
-    uint8_t *root = disk[2];
-    memcpy(root, "USB DRIVE  ", 11);
-    root[11] = 0x08; // volume label attribute
-}
-
-// How much space is used (for the character!)
+// Read FAT32 FSInfo sector to estimate disk usage, or return 0 if unavailable.
 float disk_get_usage(void) {
-    // Count non-zero clusters in FAT
-    uint8_t *fat = disk[1];
-    int used = 0;
-    int total = DISK_BLOCK_NUM - 3; // minus boot, FAT, root
-    for (int i = 2; i < total; i++) {
-        // FAT12: each entry is 1.5 bytes
-        int off = i + (i / 2);
-        if (off + 1 >= DISK_BLOCK_SIZE) break; // stay within FAT sector
-        uint16_t val;
-        if (i & 1)
-            val = (fat[off] >> 4) | (fat[off + 1] << 4);
-        else
-            val = fat[off] | ((fat[off + 1] & 0x0F) << 8);
-        if (val != 0) used++;
-    }
-    return (total > 0) ? (float)used / (float)total : 0.0f;
+    uint32_t total_blocks = sd_get_block_count();
+    if (total_blocks == 0) return 0.0f;
+
+    // Read boot sector — extract all needed fields in one pass
+    uint8_t buf[SD_BLOCK_SIZE];
+    if (!sd_read_block(0, buf)) return 0.0f;
+
+    // FAT32 has sectors_per_FAT16 == 0
+    uint16_t sectors_per_fat16 = buf[22] | (buf[23] << 8);
+    if (sectors_per_fat16 != 0) return 0.0f; // Not FAT32
+
+    // Save boot sector fields before buf is reused
+    uint8_t sectors_per_cluster = buf[13];
+    uint16_t reserved = buf[14] | (buf[15] << 8);
+    uint8_t num_fats = buf[16];
+    uint32_t total_sectors_32 = buf[32] | (buf[33] << 8) |
+                                (buf[34] << 16) | (buf[35] << 24);
+    uint32_t fat_size_32 = buf[36] | (buf[37] << 8) |
+                           (buf[38] << 16) | (buf[39] << 24);
+    uint16_t fsinfo_sector = buf[48] | (buf[49] << 8);
+
+    if (fsinfo_sector == 0 || fsinfo_sector == 0xFFFF) return 0.0f;
+    if (sectors_per_cluster == 0) return 0.0f;
+
+    // Read FSInfo sector
+    if (!sd_read_block(fsinfo_sector, buf)) return 0.0f;
+
+    // Validate FSInfo signatures
+    uint32_t sig1 = buf[0] | (buf[1] << 8) | (buf[2] << 16) | (buf[3] << 24);
+    uint32_t sig2 = buf[484] | (buf[485] << 8) | (buf[486] << 16) | (buf[487] << 24);
+    if (sig1 != 0x41615252 || sig2 != 0x61417272) return 0.0f;
+
+    // Free cluster count at offset 488
+    uint32_t free_clusters = buf[488] | (buf[489] << 8) |
+                             (buf[490] << 16) | (buf[491] << 24);
+    if (free_clusters == 0xFFFFFFFF) return 0.0f; // Unknown
+
+    // Compute total data clusters from saved boot sector fields
+    uint32_t data_sectors = total_sectors_32 - reserved - (num_fats * fat_size_32);
+    uint32_t total_clusters = data_sectors / sectors_per_cluster;
+
+    if (total_clusters == 0 || free_clusters > total_clusters) return 0.0f;
+    uint32_t used_clusters = total_clusters - free_clusters;
+    return (float)used_clusters / (float)total_clusters;
 }
 
 // TinyUSB MSC callbacks
 void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendor_id[8],
                          uint8_t product_id[16], uint8_t product_rev[4]) {
     memcpy(vendor_id, "PICO    ", 8);
-    memcpy(product_id, "Character Drive  ", 16);
+    memcpy(product_id, "Character Drive ", 16);
     memcpy(product_rev, "1.0 ", 4);
 }
 
 bool tud_msc_test_unit_ready_cb(uint8_t lun) {
+    if (sd_get_block_count() == 0) return false; // No card / init failed
     return !ejected;
 }
 
 void tud_msc_capacity_cb(uint8_t lun, uint32_t *block_count, uint16_t *block_size) {
-    *block_count = DISK_BLOCK_NUM;
-    *block_size = DISK_BLOCK_SIZE;
+    *block_count = sd_get_block_count();
+    *block_size = SD_BLOCK_SIZE;
 }
 
 int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
                            void *buffer, uint32_t bufsize) {
-    if (lba >= DISK_BLOCK_NUM) return -1;
-    memcpy(buffer, disk[lba] + offset, bufsize);
+    // TinyUSB may request partial blocks with offset
+    if (offset == 0 && bufsize == SD_BLOCK_SIZE) {
+        // Fast path: full block read
+        if (!sd_read_block(lba, buffer)) return -1;
+        return (int32_t)bufsize;
+    }
+
+    // Partial block: read into temp buffer, then copy the requested portion
+    uint8_t tmp[SD_BLOCK_SIZE];
+    if (!sd_read_block(lba, tmp)) return -1;
+    memcpy(buffer, tmp + offset, bufsize);
     return (int32_t)bufsize;
 }
 
 int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
                             uint8_t *buffer, uint32_t bufsize) {
-    if (lba >= DISK_BLOCK_NUM) return -1;
-    memcpy(disk[lba] + offset, buffer, bufsize);
+    if (offset == 0 && bufsize == SD_BLOCK_SIZE) {
+        if (!sd_write_block(lba, buffer)) return -1;
+        return (int32_t)bufsize;
+    }
+
+    // Partial block: read-modify-write
+    uint8_t tmp[SD_BLOCK_SIZE];
+    if (!sd_read_block(lba, tmp)) return -1;
+    memcpy(tmp + offset, buffer, bufsize);
+    if (!sd_write_block(lba, tmp)) return -1;
     return (int32_t)bufsize;
 }
 
