@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.13)
 include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 
-project(tomogatchi C CXX ASM)
+project(tamagotchi C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
@@ -31,7 +31,7 @@ target_include_directories(fatfs_lib PUBLIC
 )
 
 # ── Main executable ───────────────────────────────────────────────────────────
-add_executable(tomogatchi
+add_executable(tamagotchi
     src/main.c
     src/st7735.c
     src/bmp.c
@@ -39,12 +39,12 @@ add_executable(tomogatchi
     src/usb_msc.c
 )
 
-target_include_directories(tomogatchi PRIVATE
+target_include_directories(tamagotchi PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${fatfs_SOURCE_DIR}/source
 )
 
-target_link_libraries(tomogatchi
+target_link_libraries(tamagotchi
     pico_stdlib
     hardware_spi
     hardware_gpio
@@ -55,7 +55,7 @@ target_link_libraries(tomogatchi
 )
 
 # UART for debug output; USB port is used exclusively for MSC
-pico_enable_stdio_usb(tomogatchi 0)
-pico_enable_stdio_uart(tomogatchi 1)
+pico_enable_stdio_usb(tamagotchi 0)
+pico_enable_stdio_uart(tamagotchi 1)
 
-pico_add_extra_outputs(tomogatchi)
+pico_add_extra_outputs(tamagotchi)

@@ -13,4 +13,4 @@ fi
 
 make -j4
 cd ..
-echo "Build complete: build/tomogatchi.uf2"
+echo "Build complete: build/tamagotchi.uf2"

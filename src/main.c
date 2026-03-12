@@ -11,10 +11,10 @@
 #include <stdbool.h>
 
 // ── User configuration ────────────────────────────────────────────────────────
-#define CHARACTER    "sayuri"       // which character to display
-#define FRAME_MS     180            // ms per animation frame
-#define CHECK_EVERY  30             // re-check SD fullness every N frames
-#define MAX_FRAMES   16             // max frames per state held in RAM
+#define CHARACTER    "sayuri"  // which character to display
+#define FRAME_MS     180          // ms per animation frame
+#define CHECK_EVERY  30           // re-check SD fullness every N frames
+#define MAX_FRAMES   16           // max frames per state held in RAM
 
 // ── Enums ─────────────────────────────────────────────────────────────────────
 typedef enum { TIER_SMALL=0, TIER_MEDIUM, TIER_LARGE, TIER_COUNT } Tier;
@@ -142,18 +142,19 @@ void notify_msc_write(void) {
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
+static FATFS _fs;   // file scope so remount handler can reuse it
+
 int main(void) {
     stdio_init_all();
     sleep_ms(200);
-    printf("Tomogatchi starting — character: %s\n", CHARACTER);
+    printf("Tamagotchi starting — character: %s\n", CHARACTER);
 
     tft_init();
     tft_fill(COL_BLACK);
 
     bool sd_ok = sd_init();
     if (sd_ok) {
-        static FATFS fs;
-        FRESULT r = f_mount(&fs, "", 1);
+        FRESULT r = f_mount(&_fs, "", 1);
         sd_ok = (r == FR_OK);
         if (!sd_ok) printf("FatFs mount failed: %d\n", r);
         else        printf("FatFs mounted\n");
@@ -192,6 +193,14 @@ int main(void) {
             load_frames(tier, STATE_TRANSFER);
         } else if (was_transferring && !is_transferring) {
             _msc_write_active = false;
+            // Remount FatFs so its FAT cache reflects what the host just wrote
+            if (sd_ok) {
+                mutex_enter_blocking(&sd_mutex);
+                f_unmount("");
+                sd_ok = (f_mount(&_fs, "", 1) == FR_OK);
+                mutex_exit(&sd_mutex);
+                printf("FatFs remounted after transfer: %s\n", sd_ok ? "ok" : "fail");
+            }
             anim_state = STATE_ENDTRANSFER;
             frame_idx = 0; first_draw = true; one_shot_done = false;
             load_frames(tier, STATE_ENDTRANSFER);
