@@ -75,7 +75,7 @@ void tft_init(void) {
     _cmd(0xC4); _data1(0x8A); _data1(0xEE); // PWCTR5
     _cmd(0xC5); _data1(0x0E);               // VMCTR1
     _cmd(0x21);                             // INVON
-    _cmd(0x36); _data1(0xC8);              // MADCTL: MY+MX, portrait, RGB
+    _cmd(0x36); _data1(0x08);              // MADCTL: no mirroring, portrait, RGB
     _cmd(0x3A); _data1(0x05); sleep_ms(10); // COLMOD 16-bit
     _cmd(0x13); sleep_ms(10);               // NORON
     _cmd(0x29); sleep_ms(100);              // DISPON
@@ -162,4 +162,83 @@ void tft_blit_scaled(const uint8_t *buf, int sw, int sh, bool clear_border) {
 
     tft_blit(scaled, ox, oy, dw, dh);
     free(scaled);
+}
+
+// ── Composite blit: BG (RGB565, full size) + character (RGBA8888, scaled) ─────
+// bg_buf:   RGB565 big-endian, exactly TFT_W * TFT_H * 2 bytes
+// chr_buf:  RGBA8888, chr_w * chr_h * 4 bytes
+// Scales character by largest integer factor, centres it, alpha-composites.
+// Produces a single blit to the display.
+void tft_composite_blit(const uint8_t *bg_buf,
+                         const uint8_t *chr_buf, int chr_w, int chr_h) {
+    // Pick scale
+    int scale = TFT_W / chr_w;
+    if (TFT_H / chr_h < scale) scale = TFT_H / chr_h;
+    if (scale < 1) scale = 1;
+
+    int dw = chr_w * scale;
+    int dh = chr_h * scale;
+    int ox = (TFT_W - dw) / 2;
+    int oy = (TFT_H - dh) / 2;
+
+    // Composite into a TFT_W * TFT_H RGB565 buffer
+    uint8_t *comp = malloc(TFT_W * TFT_H * 2);
+    if (!comp) return;
+
+    // Start with BG
+    if (bg_buf) {
+        memcpy(comp, bg_buf, TFT_W * TFT_H * 2);
+    } else {
+        // No BG — fill black
+        memset(comp, 0, TFT_W * TFT_H * 2);
+    }
+
+    // Alpha-composite scaled character on top
+    if (chr_buf) {
+        for (int row = 0; row < chr_h; row++) {
+            for (int col = 0; col < chr_w; col++) {
+                const uint8_t *src = chr_buf + (row * chr_w + col) * 4;
+                uint8_t r_s = src[0];
+                uint8_t g_s = src[1];
+                uint8_t b_s = src[2];
+                uint8_t a   = src[3];
+                if (a == 0) continue;   // fully transparent, skip
+
+                for (int dy = 0; dy < scale; dy++) {
+                    int py = oy + row * scale + dy;
+                    if (py < 0 || py >= TFT_H) continue;
+                    for (int dx = 0; dx < scale; dx++) {
+                        int px = ox + col * scale + dx;
+                        if (px < 0 || px >= TFT_W) continue;
+
+                        int idx = (py * TFT_W + px) * 2;
+                        uint16_t dst_px = ((uint16_t)comp[idx] << 8) | comp[idx+1];
+
+                        // Unpack destination RGB565
+                        uint8_t r_d = (dst_px >> 11) << 3;
+                        uint8_t g_d = ((dst_px >> 5) & 0x3F) << 2;
+                        uint8_t b_d = (dst_px & 0x1F) << 3;
+
+                        // Alpha blend
+                        uint8_t r_o = (r_s * a + r_d * (255 - a)) / 255;
+                        uint8_t g_o = (g_s * a + g_d * (255 - a)) / 255;
+                        uint8_t b_o = (b_s * a + b_d * (255 - a)) / 255;
+
+                        uint16_t out_px = ((r_o & 0xF8) << 8) |
+                                          ((g_o & 0xFC) << 3) |
+                                           (b_o >> 3);
+                        comp[idx]   = (out_px >> 8) & 0xFF;
+                        comp[idx+1] =  out_px & 0xFF;
+                    }
+                }
+            }
+        }
+    }
+
+    // Single blit
+    _window(0, 0, TFT_W-1, TFT_H-1);
+    _dc_dat(); _cs_lo();
+    spi_write_blocking(TFT_SPI, comp, TFT_W * TFT_H * 2);
+    _cs_hi();
+    free(comp);
 }

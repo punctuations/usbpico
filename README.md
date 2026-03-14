@@ -1,12 +1,17 @@
 ### Build
 
-Sprites live in onboard memory and thus need to be precompiled before flashing onto the pico.
-To convert .bmp files in the sprites directory run:
+Sprites live in onboard memory and thus need to be precompiled before flashing
+onto the pico. To convert .bmp files in the sprites directory run:
+
 ```bash
 ./convert_sprites.sh
 ```
 
 Run the following command:
+
+> [!NOTE]\
+> PICO_SDK_PATH should be set in your .bashrc to the `pico-sdk` folder in this
+> directory.
 
 ```bash
 rm -rf build && mkdir build && cd build
