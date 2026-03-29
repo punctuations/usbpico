@@ -25,3 +25,7 @@ or just run the build script (just has the above commands):
 ```bash
 ./build.sh
 ```
+
+#### But why tho??
+
+This was made as a birthday present for my girlfriend since she cant find a lot of Hangyodon merch, so now she has a tamagotchi version of him
